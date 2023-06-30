@@ -114,6 +114,7 @@ def get_geneformer_perturbed_cell_embeddings(
     except:
         raise ValueError("GeneFormer requires that raw counts be available in .raw.X.")
     adata_train.obs.columns = [c.replace('/', '_') for c in adata_train.obs.columns] # Loom hates slashes in names
+    # Delete prior loom data
     try:
         shutil.rmtree("geneformer_loom_data")
     except FileNotFoundError:
@@ -123,6 +124,11 @@ def get_geneformer_perturbed_cell_embeddings(
     adata_train.var_names = [str(s) for s in adata_train.var_names]
     adata_train.write_loom("geneformer_loom_data/adata_train.loom")
     tk = TranscriptomeTokenizer({}, nproc=15)
+    # Delete prior tokenized data
+    try:
+        shutil.rmtree("tokenized_data")
+    except FileNotFoundError:
+        pass
     tk.tokenize_data(pathlib.Path("geneformer_loom_data"), "tokenized_data", "demo")
     isp = InSilicoPerturber(model_type = "Pretrained")
     filtered_input_data = isp.load_and_filter(input_data_file = "tokenized_data/demo.dataset")
@@ -144,6 +150,7 @@ def get_geneformer_perturbed_cell_embeddings(
                         raise KeyError(f"Gene {g} either has no GeneFormer token or no Ensembl ID, so it cannot be perturbed. Original error: {repr(e)}")
     adata_train.obs["perturbation_type"] = adata_train.obs["perturbation_type"].astype(str)
     assert len(adata_train.obs["perturbation_type"].unique()) == 1, "Our GeneFormer interface cannot handle deletion and overexpression in the same dataset."
+    assert len(filtered_input_data) != len(tokens_to_perturb), "Internal error: number of tokenized cells does not match number of perturbations."
     perturbation_batch = _perturb_tokenized_representation(
         control_expression = filtered_input_data, 
         perturb_type = adata_train.obs["perturbation_type"][0],
@@ -162,4 +169,8 @@ def get_geneformer_perturbed_cell_embeddings(
             )
         embeddings[batch, :] = outputs.hidden_states[layer_to_quant].sum(axis=1).to_dense()
         del outputs
+    # Clean up temporary files
+    shutil.rmtree("geneformer_loom_data")
+    shutil.rmtree("tokenized_data")
+    print("Done extracting features.", flush = True)
     return embeddings
