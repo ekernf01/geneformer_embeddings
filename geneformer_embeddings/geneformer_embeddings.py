@@ -120,7 +120,7 @@ def get_geneformer_perturbed_cell_embeddings(
         pass
     os.makedirs("geneformer_loom_data", exist_ok=True)
     adata_train.obs_names = [str(s) for s in adata_train.obs_names] #loom hates Categorical, just like everyone else
-    adata_train.var_names = [str(s) for s in adata_train.obs_names]
+    adata_train.var_names = [str(s) for s in adata_train.var_names]
     adata_train.write_loom("geneformer_loom_data/adata_train.loom")
     tk = TranscriptomeTokenizer({}, nproc=15)
     tk.tokenize_data(pathlib.Path("geneformer_loom_data"), "tokenized_data", "demo")
