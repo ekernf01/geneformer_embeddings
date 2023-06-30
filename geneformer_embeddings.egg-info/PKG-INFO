@@ -1,0 +1,29 @@
+Metadata-Version: 2.1
+Name: geneformer-embeddings
+Version: 0.0.1
+Summary: Extract cell embeddings from GeneFormer
+Home-page: https://github.com/ekernf01/geneformer_embeddings
+Author: Eric Kernfeld
+Author-email: eric.kern13@gmail.com
+License: UNKNOWN
+Platform: UNKNOWN
+Requires-Python: >=3.7
+Description-Content-Type: text/markdown
+
+## Extract cell embeddings from GeneFormer
+
+
+Installation:
+
+[Install GeneFormer](https://huggingface.co/ctheodoris/Geneformer#installation). Then do:
+
+```
+pip install git+https://github.com/ekernf01/geneformer_embeddings
+```
+
+Usage:
+
+```python
+import geneformer_embeddings
+```
+

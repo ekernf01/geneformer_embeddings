@@ -1,0 +1,44 @@
+{% set name = "geneformer_embeddings" %}
+{% set version = "0.0.1" %}
+
+package:
+  name: "{{ name|lower }}"
+  version: "{{ version }}"
+
+source:
+  url: "https://test.pypi.org/packages/source/{{ name[0] }}/{{ name }}/{{ name }}-{{ version }}.tar.gz"
+  sha256: 8be34b16be487460f5589ead8aac882a2cda0124225754a3029b6bc64773d785
+
+build:
+  number: 0
+  script: "{{ PYTHON }} -m pip install . -vv"
+
+requirements:
+  host:
+    - numpy
+    - anndata
+    - biomart
+    - transformers
+
+  run:
+    - numpy
+    - anndata
+    - biomart
+    - transformers
+
+test:
+  imports:
+    - geneformer_embeddings
+
+about:
+  home: "https://test.pypi.org/pypi/geneformer_embeddings/{{ version }}"
+  license: UNKNOWN
+  license_family: OTHER
+  license_file: 
+  summary: "Extract cell embeddings from GeneFormer"
+  doc_url: 
+  dev_url: 
+
+extra:
+  recipe-maintainers:
+    - ekernf01
