@@ -1,6 +1,5 @@
 README.md
 setup.py
-geneformer_embeddings/__init__.py
 geneformer_embeddings/geneformer_embeddings.py
 geneformer_embeddings.egg-info/PKG-INFO
 geneformer_embeddings.egg-info/SOURCES.txt

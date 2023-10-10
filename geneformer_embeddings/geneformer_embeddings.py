@@ -12,10 +12,13 @@ import shutil
 import torch 
 import math
 
-def _get_ensembl_mappings():
+def get_ensembl_mappings():
     """Obtain dictionaries to map between HGNC symbol and ensembl ID"""                                   
-    # Set up connection to server                                               
-    server = biomart.BiomartServer('http://useast.ensembl.org/biomart')         
+    # Set up connection to server 
+    try:
+        server = biomart.BiomartServer('http://useast.ensembl.org/biomart')         
+    except:
+        server = biomart.BiomartServer('http://ensembl.org/biomart')         
     mart = server.datasets['hsapiens_gene_ensembl']                            
                                                                                                                                                     
     # Get the mapping between the attributes                                    
@@ -43,12 +46,18 @@ def _perturb_tokenized_representation(control_expression,
     # The original code appears not to support overexpressing genes unless they are  
     # detected in the starting cell state. in_silico_perturber.overexpress_index can only 
     # perturb a gene whose token is already present. Here we add the missing tokens at the 
-    # end to better support reprogramming.
+    # end as if they are present but low-expressed. 
     cell_token_lists = [None for i in perturbation_list_list]
     for i,perturbation_list in enumerate(perturbation_list_list):
         undetected_tokens = set(perturbation_list).difference(set(control_expression[i]["input_ids"]))
         cell_token_lists[i] = control_expression[i]["input_ids"]
         cell_token_lists[i][0:len(undetected_tokens)] = undetected_tokens
+        with open(in_silico_perturber.TOKEN_DICTIONARY_FILE, "rb") as f:
+            gene_token_dict = pickle.load(f)
+        paddington_bear = gene_token_dict["<pad>"]
+        l = len(cell_token_lists[i]) 
+        if l < 2048:
+            cell_token_lists[i] = cell_token_lists[i] + [paddington_bear] * (2048-l)
     perturbation_dataset = Dataset.from_dict(
         {
             "input_ids": cell_token_lists, 
@@ -63,10 +72,11 @@ def _perturb_tokenized_representation(control_expression,
             ],
         }
     )
+    assert all([len(f)==2048 for f in perturbation_dataset["input_ids"]]), f"A perturbed tokenized cell has the wrong length."
     if perturb_type.lower() in {"delete", "knockdown", "knockout"}:
-        perturbation_dataset = perturbation_dataset.map(in_silico_perturber.delete_index, num_proc=15)
+        perturbation_dataset = perturbation_dataset.map(in_silico_perturber.delete_indices, num_proc=15)
     elif perturb_type.lower() in {"overexpress", "overexpression"}:
-        perturbation_dataset = perturbation_dataset.map(in_silico_perturber.overexpress_index, num_proc=15)
+        perturbation_dataset = perturbation_dataset.map(in_silico_perturber.overexpress_indices, num_proc=15)
     else:
         raise ValueError(f"perturb_type must be 'delete', 'knockdown', 'knockout', or 'overexpress', or 'overexpression'; got {perturb_type}.")
     return perturbation_dataset
@@ -101,7 +111,7 @@ def get_geneformer_perturbed_cell_embeddings(
         gene_token_dict = pickle.load(f)
 
     if gene_name_converter is None:
-        gene_name_converter = _get_ensembl_mappings()["genesymbol_to_ensembl"]  
+        gene_name_converter = get_ensembl_mappings()["genesymbol_to_ensembl"]  
 
     # Prereqs: raw counts, ensembl genes, certain metadata, save to loom file, tokenize
     adata_train.var["ensembl_id"] = [gene_name_converter[g] if g in gene_name_converter else "" for g in adata_train.var_names]
@@ -122,6 +132,7 @@ def get_geneformer_perturbed_cell_embeddings(
     os.makedirs("geneformer_loom_data", exist_ok=True)
     adata_train.obs_names = [str(s) for s in adata_train.obs_names] #loom hates Categorical, just like everyone else
     adata_train.var_names = [str(s) for s in adata_train.var_names]
+    adata_train.obs["condition"] = "NA" # I'm sorry, this is a horrible hack to get rid of a non-ASCII char in a dataset. 
     adata_train.write_loom("geneformer_loom_data/adata_train.loom")
     tk = TranscriptomeTokenizer({}, nproc=15)
     # Delete prior tokenized data
@@ -157,18 +168,26 @@ def get_geneformer_perturbed_cell_embeddings(
         perturbation_list_list = tokens_to_perturb
     )
     # We can't do the forward pass all in one batch due to very large memory requirements.
-    perturbation_batch.set_format(type="torch")
     embeddings = np.zeros((adata_train.n_obs, 256))
     batches = np.array_split(range(adata_train.n_obs), math.ceil(adata_train.n_obs/100))
     print(f"Extracting cell embeddings from GeneFormer in {len(batches)} batches.")
+    with open(in_silico_perturber.TOKEN_DICTIONARY_FILE, "rb") as f:
+        gene_token_dict = pickle.load(f)
+    paddington_bear = gene_token_dict["<pad>"]
+    def pad_to_2048(x):
+        while len(x) < 2048:
+            x.append(paddington_bear)
+        return x
     for batch in batches:
-        print(".", end = "")
         with torch.no_grad():
             outputs = geneformer_model(
-                input_ids = perturbation_batch[batch]["input_ids"].to("cpu")
+                input_ids = torch.tensor([
+                    pad_to_2048(c) for c in perturbation_batch[batch]["input_ids"]
+                ]).to("cpu")
             )
         embeddings[batch, :] = outputs.hidden_states[layer_to_quant].sum(axis=1).to_dense()
         del outputs
+        print(".", end = "", flush = True)
     # Clean up temporary files
     shutil.rmtree("geneformer_loom_data")
     shutil.rmtree("geneformer_tokenized_data")
