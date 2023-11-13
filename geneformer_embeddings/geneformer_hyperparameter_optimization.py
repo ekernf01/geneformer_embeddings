@@ -10,9 +10,7 @@ from sklearn.metrics import accuracy_score, f1_score
 from transformers import BertForSequenceClassification
 from transformers import Trainer
 from transformers.training_args import TrainingArguments
-
 from geneformer import DataCollatorForCellClassification
-
 # initiate runtime environment for raytune
 import pyarrow # must occur prior to ray import
 import ray
@@ -24,23 +22,14 @@ conda_path = os.popen("which conda").read().strip()
 runtime_env = {"conda": "ggrn",
                "env_vars": {"LD_LIBRARY_PATH": conda_path}}
 ray.init(runtime_env=runtime_env)
-    
 import random
-import seaborn as sns; sns.set()
-from datasets import load_from_disk
-from sklearn.metrics import accuracy_score
-from transformers import BertForSequenceClassification
-from transformers import Trainer
-from transformers.training_args import TrainingArguments
 import geneformer_embeddings.geneformer_embeddings as geneformer_embeddings
-from geneformer import DataCollatorForCellClassification
 import load_perturbations
 load_perturbations.set_data_path("perturbation_data/perturbations")
 adata = load_perturbations.load_perturbation("nakatake")
 
-
 def geneformer_optimize_hyperparameters(
-        adata,
+        file_with_tokens,
         column_with_labels = "louvain", 
         num_proc = 1, 
         freeze_layers = 2,
@@ -54,12 +43,6 @@ def geneformer_optimize_hyperparameters(
     if logging_steps is None:
         round(len(classifier_trainset)/geneformer_batch_size/10)
     
-    # make and load train dataset with columns: 
-    #
-    # - column_with_labels (annotation of each cell's type)
-    # - individual (unique ID for each observation)
-    # - length (length of that cell's rank value encoding)
-    file_with_tokens = geneformer_embeddings.tokenize(adata)
     train_dataset=load_from_disk(file_with_tokens)
     target_names = list(adata.obs[column_with_labels].unique())
     target_name_id_dict = dict(zip(target_names,[i for i in range(len(target_names))]))
@@ -173,9 +156,9 @@ def geneformer_optimize_hyperparameters(
         )
     return hyperparameters
 
-
 def geneformer_finetune_classify(
-        train_dataset_path,
+        file_with_tokens,
+        column_with_labels = "louvain",
         max_input_size = 2 ** 11,  # 2048
         max_lr = 5e-5,
         freeze_layers = 0,
@@ -186,46 +169,21 @@ def geneformer_finetune_classify(
         optimizer = "adamw",
         GPU_NUMBER = [], 
         seed = 42,
+        weight_decay = 0.001,
     ):
     os.environ["CUDA_VISIBLE_DEVICES"] = ",".join([str(s) for s in GPU_NUMBER])
     os.environ["NCCL_DEBUG"] = "INFO"
-    train_dataset=load_from_disk(train_dataset_path)
-    dataset_list = []
-    evalset_list = []
-    organ_list = []
-    target_dict_list = []
-
-    # shuffle datasets and rename columns
+    train_dataset=load_from_disk(file_with_tokens)
     train_dataset = train_dataset.shuffle(seed=seed)
-    train_dataset = train_dataset.rename_column("cell_type","label")
-
-    # create dictionary of cell types : label ids
+    train_dataset = train_dataset.rename_column(column_with_labels, "label")
     target_names = list(Counter(train_dataset["label"]).keys())
     target_name_id_dict = dict(zip(target_names,[i for i in range(len(target_names))]))
-    target_dict_list += [target_name_id_dict]
-    
-    # change labels to numerical ids
     def classes_to_ids(example):
         example["label"] = target_name_id_dict[example["label"]]
         return example
     labeled_trainset = train_dataset.map(classes_to_ids, num_proc=16)
-    
-    # create 80/20 train/eval splits
     labeled_train_split = labeled_trainset.select([i for i in range(0,round(len(labeled_trainset)*0.8))])
-    labeled_eval_split = labeled_trainset.select([i for i in range(round(len(labeled_trainset)*0.8),len(labeled_trainset))])
-        
-    # filter dataset for cell types in corresponding training set
-    trained_labels = list(Counter(labeled_train_split["label"]).keys())
-    def if_trained_label(example):
-        return example["label"] in trained_labels
-    labeled_eval_split_subset = labeled_eval_split.filter(if_trained_label, num_proc=16)
-
-    dataset_list += [labeled_train_split]
-    evalset_list += [labeled_eval_split_subset]
-    trainset_dict = dict(zip(organ_list,dataset_list))
-    traintargetdict_dict = dict(zip(organ_list,target_dict_list))
-
-    evalset_dict = dict(zip(organ_list,evalset_list))
+    labeled_eval_split  = labeled_trainset.select([i for i in range(round(len(labeled_trainset)*0.8),len(labeled_trainset))])
     def compute_metrics(pred):
         labels = pred.label_ids
         preds = pred.predictions.argmax(-1)
@@ -237,70 +195,85 @@ def geneformer_finetune_classify(
         'macro_f1': macro_f1
         }
 
-    for organ in organ_list:
-        print(organ)
-        organ_trainset = trainset_dict[organ]
-        organ_evalset = evalset_dict[organ]
-        organ_label_dict = traintargetdict_dict[organ]
-        
-        # set logging steps
-        logging_steps = round(len(organ_trainset)/geneformer_batch_size/10)
-        
-        # reload pretrained model
-        model = BertForSequenceClassification.from_pretrained("/path/to/pretrained_model/", 
-                                                        num_labels=len(organ_label_dict.keys()),
-                                                        output_attentions = False,
-                                                        output_hidden_states = False).to("cuda")
-        
-        # define output directory path
-        current_date = datetime.datetime.now()
-        datestamp = f"{str(current_date.year)[-2:]}{current_date.month:02d}{current_date.day:02d}"
-        output_dir = f"/path/to/models/{datestamp}_geneformer_CellClassifier_{organ}_L{max_input_size}_B{geneformer_batch_size}_LR{max_lr}_LS{lr_schedule_fn}_WU{warmup_steps}_E{epochs}_O{optimizer}_F{freeze_layers}/"
-        
-        # ensure not overwriting previously saved model
-        saved_model_test = os.path.join(output_dir, f"pytorch_model.bin")
-        if os.path.isfile(saved_model_test) == True:
-            raise Exception("Model already saved to this directory.")
+    # set logging steps
+    logging_steps = round(len(labeled_train_split)/geneformer_batch_size/10)
+    
+    # reload pretrained model
+    model = BertForSequenceClassification.from_pretrained(
+        "ctheodoris/GeneFormer", 
+        num_labels=len(target_names),
+        output_attentions = False,
+        output_hidden_states = False
+    ).to("cpu")
 
-        # make output directory
-        subprocess.call(f'mkdir {output_dir}', shell=True)
-        
-        # set training arguments
-        training_args = {
-            "learning_rate": max_lr,
-            "do_train": True,
-            "do_eval": True,
-            "evaluation_strategy": "epoch",
-            "save_strategy": "epoch",
-            "logging_steps": logging_steps,
-            "group_by_length": True,
-            "length_column_name": "length",
-            "disable_tqdm": False,
-            "lr_scheduler_type": lr_schedule_fn,
-            "warmup_steps": warmup_steps,
-            "weight_decay": 0.001,
-            "per_device_train_batch_size": geneformer_batch_size,
-            "per_device_eval_batch_size": geneformer_batch_size,
-            "num_train_epochs": epochs,
-            "load_best_model_at_end": True,
-            "output_dir": output_dir,
-        }
-        
-        training_args_init = TrainingArguments(**training_args)
+    # define output directory path
+    current_date = datetime.datetime.now()
+    datestamp = f"{str(current_date.year)[-2:]}{current_date.month:02d}{current_date.day:02d}"
+    output_dir = f"geneformer_finetuned/{datestamp}_geneformer_CellClassifier_L{max_input_size}_B{geneformer_batch_size}_LR{max_lr}_LS{lr_schedule_fn}_WU{warmup_steps}_E{epochs}_O{optimizer}_F{freeze_layers}/"
+    
+    # ensure not overwriting previously saved model
+    saved_model_test = os.path.join(output_dir, f"pytorch_model.bin")
+    if os.path.isfile(saved_model_test) == True:
+        raise Exception("Model already saved to this directory.")
 
-        # create the trainer
-        trainer = Trainer(
-            model=model,
-            args=training_args_init,
-            data_collator=DataCollatorForCellClassification(),
-            train_dataset=organ_trainset,
-            eval_dataset=organ_evalset,
-            compute_metrics=compute_metrics
-        )
-        # train the cell type classifier
-        trainer.train()
-        predictions = trainer.predict(organ_evalset)
-        with open(f"{output_dir}predictions.pickle", "wb") as fp:
-            pickle.dump(predictions, fp)
-        trainer.save_metrics("eval",predictions.metrics)
-        trainer.save_model(output_dir)
+    # make output directory
+    os.makedirs(output_dir, exist_ok=False)
+    
+    # set training arguments
+    training_args = {
+        "learning_rate": max_lr,
+        "do_train": True,
+        "do_eval": True,
+        "evaluation_strategy": "epoch",
+        "save_strategy": "epoch",
+        "logging_steps": logging_steps,
+        "group_by_length": True,
+        "length_column_name": "length",
+        "disable_tqdm": False,
+        "lr_scheduler_type": lr_schedule_fn,
+        "warmup_steps": warmup_steps,
+        "weight_decay": weight_decay,
+        "per_device_train_batch_size": geneformer_batch_size,
+        "per_device_eval_batch_size": geneformer_batch_size,
+        "num_train_epochs": epochs,
+        "load_best_model_at_end": True,
+        "output_dir": output_dir,
+    }
+    
+    training_args_init = TrainingArguments(**training_args)
+
+    # create the trainer
+    trainer = Trainer(
+        model=model,
+        args=training_args_init,
+        data_collator=DataCollatorForCellClassification(),
+        train_dataset=labeled_train_split,
+        eval_dataset=labeled_eval_split,
+        compute_metrics=compute_metrics
+    )
+    # train the cell type classifier
+    trainer.train()
+    predictions = trainer.predict(labeled_eval_split)
+    with open(f"{output_dir}predictions.pickle", "wb") as fp:
+        pickle.dump(predictions, fp)
+    trainer.save_metrics("eval",predictions.metrics)
+    trainer.save_model(output_dir)
+    return output_dir
+
+file_with_tokens = geneformer_embeddings.tokenize(adata)
+some_good_fucken_hyperparameters = geneformer_optimize_hyperparameters(file_with_tokens)
+model_save_path = geneformer_finetune_classify(
+    file_with_tokens, 
+    column_with_labels = "louvain",
+    max_input_size = 2 ** 11,  # 2048
+    max_lr                = some_good_fucken_hyperparameters["learning_rate"],
+    freeze_layers = 0,
+    geneformer_batch_size = some_good_fucken_hyperparameters["per_device_train_batch_size"],
+    lr_schedule_fn        = some_good_fucken_hyperparameters["lr_scheduler_type"],
+    warmup_steps          = some_good_fucken_hyperparameters["warmup_steps"],
+    epochs                = some_good_fucken_hyperparameters["num_train_epochs"],
+    optimizer = "adamw",
+    GPU_NUMBER = [], 
+    seed                  = some_good_fucken_hyperparameters["seed"], 
+    weight_decay          = some_good_fucken_hyperparameters["weight_decay"],
+)
