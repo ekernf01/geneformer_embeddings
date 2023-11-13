@@ -81,6 +81,62 @@ def _perturb_tokenized_representation(control_expression,
         raise ValueError(f"perturb_type must be 'delete', 'knockdown', 'knockout', or 'overexpress', or 'overexpression'; got {perturb_type}.")
     return perturbation_dataset
 
+def tokenize(adata_train: anndata.AnnData, gene_name_converter = None):
+    """Given an anndata object, tokenize it to a file and return the name of the file. 
+
+    Args:
+        adata_train (anndata.AnnData): _description_
+
+    Raises:
+        NotImplementedError: _description_
+    """
+    with open(in_silico_perturber.TOKEN_DICTIONARY_FILE, "rb") as f:
+        gene_token_dict = pickle.load(f)
+
+    if gene_name_converter is None:
+        gene_name_converter = get_ensembl_mappings()["genesymbol_to_ensembl"]  
+
+    # Prereqs: raw counts, ensembl genes, certain metadata
+    adata_train.var["ensembl_id"] = [gene_name_converter[g] if g in gene_name_converter else "" for g in adata_train.var_names]
+    adata_train = adata_train[:, adata_train.var["ensembl_id"] != ""] 
+    adata_train.obs["filter_pass"] = True
+    adata_train.obs["cell_type"] = "unknown"
+    try:
+        adata_train.obs["n_counts"] = adata_train.raw.X.sum(axis = 1)
+        adata_train.X = adata_train.raw[adata_train.obs_names, adata_train.var_names].X
+    except:
+        raise ValueError("GeneFormer requires that raw counts be available in .raw.X.")
+    adata_train.obs.columns = [c.replace('/', '_') for c in adata_train.obs.columns] # Loom hates slashes in names
+    adata_train.obs["individual"] = adata_train.obs.index
+    cols_to_save = ["individual"]
+    if "louvain" in adata_train.obs.columns:
+        cols_to_save.append("louvain")
+
+    # Delete prior loom data
+    try:
+        shutil.rmtree("geneformer_loom_data")
+    except FileNotFoundError:
+        pass
+
+    # save to loom
+    os.makedirs("geneformer_loom_data", exist_ok=True)
+    adata_train.obs_names = [str(s) for s in adata_train.obs_names] #loom hates Categorical, just like everyone else
+    adata_train.var_names = [str(s) for s in adata_train.var_names]
+    adata_train.obs["condition"] = "NA" # I'm sorry, this is a horrible hack to get rid of a non-ASCII char in the Frangieh dataset. 
+    adata_train.write_loom("geneformer_loom_data/adata_train.loom")
+    tk = TranscriptomeTokenizer({col:col for col in cols_to_save}, nproc=15)
+
+    # Delete prior tokenized data
+    try:
+        shutil.rmtree("geneformer_tokenized_data")
+    except FileNotFoundError:
+        pass
+
+    # tokenizeeeeeee
+    tk.tokenize_data(pathlib.Path("geneformer_loom_data"), "geneformer_tokenized_data", "demo")
+    return "geneformer_tokenized_data/demo.dataset"
+
+
 def get_geneformer_perturbed_cell_embeddings(
         adata_train: anndata.AnnData, 
         layer_to_quant: int = -1,
@@ -88,8 +144,7 @@ def get_geneformer_perturbed_cell_embeddings(
         apply_perturbation_explicitly: bool = True,
         gene_name_converter: dict = None,
     ):
-    """Fit a model to predict perturbation-induced fold change by transforming GeneFormer 
-    embeddings into quantitative expression values
+    """Predict perturbation-induced changes in terms of GeneFormer embeddings. 
 
     Args:
 
@@ -106,43 +161,14 @@ def get_geneformer_perturbed_cell_embeddings(
 
         numpy array with one column per feature and one row per observation in adata.train
     """
-
     with open(in_silico_perturber.TOKEN_DICTIONARY_FILE, "rb") as f:
         gene_token_dict = pickle.load(f)
-
     if gene_name_converter is None:
         gene_name_converter = get_ensembl_mappings()["genesymbol_to_ensembl"]  
 
-    # Prereqs: raw counts, ensembl genes, certain metadata, save to loom file, tokenize
-    adata_train.var["ensembl_id"] = [gene_name_converter[g] if g in gene_name_converter else "" for g in adata_train.var_names]
-    adata_train = adata_train[:, adata_train.var["ensembl_id"] != ""] 
-    adata_train.obs["filter_pass"] = True
-    adata_train.obs["cell_type"] = "unknown"
-    try:
-        adata_train.obs["n_counts"] = adata_train.raw.X.sum(axis = 1)
-        adata_train.X = adata_train.raw[adata_train.obs_names, adata_train.var_names].X
-    except:
-        raise ValueError("GeneFormer requires that raw counts be available in .raw.X.")
-    adata_train.obs.columns = [c.replace('/', '_') for c in adata_train.obs.columns] # Loom hates slashes in names
-    # Delete prior loom data
-    try:
-        shutil.rmtree("geneformer_loom_data")
-    except FileNotFoundError:
-        pass
-    os.makedirs("geneformer_loom_data", exist_ok=True)
-    adata_train.obs_names = [str(s) for s in adata_train.obs_names] #loom hates Categorical, just like everyone else
-    adata_train.var_names = [str(s) for s in adata_train.var_names]
-    adata_train.obs["condition"] = "NA" # I'm sorry, this is a horrible hack to get rid of a non-ASCII char in a dataset. 
-    adata_train.write_loom("geneformer_loom_data/adata_train.loom")
-    tk = TranscriptomeTokenizer({}, nproc=15)
-    # Delete prior tokenized data
-    try:
-        shutil.rmtree("geneformer_tokenized_data")
-    except FileNotFoundError:
-        pass
-    tk.tokenize_data(pathlib.Path("geneformer_loom_data"), "geneformer_tokenized_data", "demo")
     isp = InSilicoPerturber(model_type = "Pretrained")
-    filtered_input_data = isp.load_and_filter(input_data_file = "geneformer_tokenized_data/demo.dataset")
+    file_with_tokens = tokenize(adata_train, gene_name_converter = gene_name_converter)
+    filtered_input_data = isp.load_and_filter(input_data_file = file_with_tokens)
 
     # Obtain perturbed embeddings
     geneformer_model = BertForMaskedLM.from_pretrained("ctheodoris/Geneformer", output_hidden_states=True, output_attentions=False)
@@ -171,8 +197,6 @@ def get_geneformer_perturbed_cell_embeddings(
     embeddings = np.zeros((adata_train.n_obs, 256))
     batches = np.array_split(range(adata_train.n_obs), math.ceil(adata_train.n_obs/100))
     print(f"Extracting cell embeddings from GeneFormer in {len(batches)} batches.")
-    with open(in_silico_perturber.TOKEN_DICTIONARY_FILE, "rb") as f:
-        gene_token_dict = pickle.load(f)
     paddington_bear = gene_token_dict["<pad>"]
     def pad_to_2048(x):
         while len(x) < 2048:
