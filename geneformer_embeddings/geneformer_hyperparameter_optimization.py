@@ -1,9 +1,7 @@
 import os
-# imports
 from collections import Counter
 import datetime
 import pickle
-import subprocess
 import seaborn as sns; sns.set()
 from datasets import load_from_disk
 from sklearn.metrics import accuracy_score, f1_score
@@ -15,20 +13,11 @@ from geneformer import DataCollatorForCellClassification
 import pyarrow # must occur prior to ray import
 import ray
 from ray import tune
-from ray.tune import ExperimentAnalysis
 from ray.tune.search.hyperopt import HyperOptSearch
-ray.shutdown() #engage new ray session
-conda_path = os.popen("which conda").read().strip()
-runtime_env = {"conda": "ggrn",
-               "env_vars": {"LD_LIBRARY_PATH": conda_path}}
-ray.init(runtime_env=runtime_env)
 import random
 import geneformer_embeddings.geneformer_embeddings as geneformer_embeddings
-import load_perturbations
-load_perturbations.set_data_path("perturbation_data/perturbations")
-adata = load_perturbations.load_perturbation("nakatake")
 
-def geneformer_optimize_hyperparameters(
+def optimize_hyperparameters(
         file_with_tokens,
         column_with_labels = "louvain", 
         num_proc = 1, 
@@ -40,11 +29,13 @@ def geneformer_optimize_hyperparameters(
         output_dir = "geneformer_hyperparams",
         n_cpu = 8,
     ):
-    if logging_steps is None:
-        round(len(classifier_trainset)/geneformer_batch_size/10)
-    
+    ray.shutdown() 
+    conda_path = os.popen("which conda").read().strip()
+    runtime_env = {"conda": "ggrn",
+               "env_vars": {"LD_LIBRARY_PATH": conda_path}}
+    ray.init(runtime_env=runtime_env)
     train_dataset=load_from_disk(file_with_tokens)
-    target_names = list(adata.obs[column_with_labels].unique())
+    target_names = list(set(train_dataset[column_with_labels]))
     target_name_id_dict = dict(zip(target_names,[i for i in range(len(target_names))]))
     train_dataset = train_dataset.rename_column(column_with_labels,"label")
     def classes_to_ids(example):
@@ -97,6 +88,8 @@ def geneformer_optimize_hyperparameters(
         }
 
     # set training arguments
+    if logging_steps is None:
+        logging_steps = round(len(classifier_trainset)/geneformer_batch_size/10)
     training_args = {
         "do_train": True,
         "do_eval": True,
@@ -154,18 +147,19 @@ def geneformer_optimize_hyperparameters(
                                             metric="eval_accuracy",
                                             metric_columns=["loss", "eval_loss", "eval_accuracy"])
         )
+    ray.shutdown() 
     return hyperparameters
 
-def geneformer_finetune_classify(
+def finetune_classify(
         file_with_tokens,
         column_with_labels = "louvain",
         max_input_size = 2 ** 11,  # 2048
         max_lr = 5e-5,
-        freeze_layers = 0,
+        freeze_layers = 2,
         geneformer_batch_size = 12,
         lr_schedule_fn = "linear",
         warmup_steps = 500,
-        epochs = 10,
+        epochs = 1,
         optimizer = "adamw",
         GPU_NUMBER = [], 
         seed = 42,
@@ -259,21 +253,3 @@ def geneformer_finetune_classify(
     trainer.save_metrics("eval",predictions.metrics)
     trainer.save_model(output_dir)
     return output_dir
-
-file_with_tokens = geneformer_embeddings.tokenize(adata)
-some_good_fucken_hyperparameters = geneformer_optimize_hyperparameters(file_with_tokens)
-model_save_path = geneformer_finetune_classify(
-    file_with_tokens, 
-    column_with_labels = "louvain",
-    max_input_size = 2 ** 11,  # 2048
-    max_lr                = some_good_fucken_hyperparameters["learning_rate"],
-    freeze_layers = 0,
-    geneformer_batch_size = some_good_fucken_hyperparameters["per_device_train_batch_size"],
-    lr_schedule_fn        = some_good_fucken_hyperparameters["lr_scheduler_type"],
-    warmup_steps          = some_good_fucken_hyperparameters["warmup_steps"],
-    epochs                = some_good_fucken_hyperparameters["num_train_epochs"],
-    optimizer = "adamw",
-    GPU_NUMBER = [], 
-    seed                  = some_good_fucken_hyperparameters["seed"], 
-    weight_decay          = some_good_fucken_hyperparameters["weight_decay"],
-)

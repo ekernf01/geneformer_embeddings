@@ -139,15 +139,17 @@ def tokenize(adata_train: anndata.AnnData, gene_name_converter = None):
 
 def get_geneformer_perturbed_cell_embeddings(
         adata_train: anndata.AnnData, 
+        file_with_tokens: str, 
         layer_to_quant: int = -1,
         assume_unrecognized_genes_are_controls: bool = False,
         apply_perturbation_explicitly: bool = True,
         gene_name_converter: dict = None,
+        file_with_finetuned_model = None,
     ):
     """Predict perturbation-induced changes in terms of GeneFormer embeddings. 
 
     Args:
-
+        file_with_tokens (str): path to a file created by this module's tokenize() function. 
         adata_train (anndata.AnnData): expression data with raw counts in .raw.X, perturbations 
             in .obs["perturbation"], and perturbation types in .obs["perturbation_type"].
         layer_to_quant (int): What layer of the network to extract embeddings from.
@@ -156,6 +158,7 @@ def get_geneformer_perturbed_cell_embeddings(
         assume_unrecognized_genes_are_controls: If True, treat unrecognized gene names as controls when reading perturbation info. 
             We recommend False, but True can be useful for e.g. controls labeled "GFP" or "ctrl" or "scramble".  
         gene_name_converter (dict): dict where keys are HGNC symbols and values are Ensembl gene ID's.
+        file_with_finetuned_model (str): path to a file where you have saved a fine-tuned model.
 
     Returns:
 
@@ -166,12 +169,17 @@ def get_geneformer_perturbed_cell_embeddings(
     if gene_name_converter is None:
         gene_name_converter = get_ensembl_mappings()["genesymbol_to_ensembl"]  
 
-    isp = InSilicoPerturber(model_type = "Pretrained")
-    file_with_tokens = tokenize(adata_train, gene_name_converter = gene_name_converter)
-    filtered_input_data = isp.load_and_filter(input_data_file = file_with_tokens)
+    if file_with_finetuned_model is None:
+        print(f"Using pre-trained model 'ctheodoris/Geneformer'")
+        isp = InSilicoPerturber(model_type = "pretrained")
+        filtered_input_data = isp.load_and_filter(input_data_file = file_with_tokens)
+        geneformer_model = BertForMaskedLM.from_pretrained("ctheodoris/Geneformer", output_hidden_states=True, output_attentions=False)
+    else:
+        print(f"Using fine-tuned model at {file_with_finetuned_model}")
+        isp = InSilicoPerturber(model_type = "CellClassifier")
+        filtered_input_data = isp.load_and_filter(input_data_file = file_with_tokens)
+        geneformer_model = BertForMaskedLM.from_pretrained(file_with_finetuned_model, output_hidden_states=True, output_attentions=False)
 
-    # Obtain perturbed embeddings
-    geneformer_model = BertForMaskedLM.from_pretrained("ctheodoris/Geneformer", output_hidden_states=True, output_attentions=False)
     embeddings = np.zeros((adata_train.n_obs, 256))
     tokens_to_perturb = []
     for int_i, i in enumerate(adata_train.obs_names):
