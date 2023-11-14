@@ -23,7 +23,7 @@ def optimize_hyperparameters(
         num_proc = 1, 
         freeze_layers = 2,
         geneformer_batch_size = 12,
-        epochs = 1,
+        epochs = 10,
         logging_steps = None,
         seed = 42,
         output_dir = "geneformer_hyperparams",
@@ -159,7 +159,7 @@ def finetune_classify(
         geneformer_batch_size = 12,
         lr_schedule_fn = "linear",
         warmup_steps = 500,
-        epochs = 1,
+        epochs = 10,
         optimizer = "adamw",
         GPU_NUMBER = [], 
         seed = 42,
@@ -205,10 +205,12 @@ def finetune_classify(
     datestamp = f"{str(current_date.year)[-2:]}{current_date.month:02d}{current_date.day:02d}"
     output_dir = f"geneformer_finetuned/{datestamp}_geneformer_CellClassifier_L{max_input_size}_B{geneformer_batch_size}_LR{max_lr}_LS{lr_schedule_fn}_WU{warmup_steps}_E{epochs}_O{optimizer}_F{freeze_layers}/"
     
-    # ensure not overwriting previously saved model
+    # Remove any previously saved model
     saved_model_test = os.path.join(output_dir, f"pytorch_model.bin")
-    if os.path.isfile(saved_model_test) == True:
-        raise Exception("Model already saved to this directory.")
+    try: 
+        os.unlink(saved_model_test)
+    except FileNotFoundError:
+        pass
 
     # make output directory
     os.makedirs(output_dir, exist_ok=False)
