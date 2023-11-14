@@ -81,18 +81,17 @@ def _perturb_tokenized_representation(control_expression,
         raise ValueError(f"perturb_type must be 'delete', 'knockdown', 'knockout', or 'overexpress', or 'overexpression'; got {perturb_type}.")
     return perturbation_dataset
 
-def tokenize(adata_train: anndata.AnnData, gene_name_converter = None, geneformer_finetune_labels = None):
+def tokenize(adata_train: anndata.AnnData, geneformer_finetune_labels: str = None, gene_name_converter: dict = None) -> str:
     """Given an anndata object, tokenize it to a file and return the name of the file. 
 
     Args:
-        adata_train (anndata.AnnData): _description_
+        adata_train (anndata.AnnData): input expression dataset
+        geneformer_finetune_labels (str, optional): Name of a column in adata_train.obs to be used as labels for fine-tuning. Defaults to None.
+        gene_name_converter (dict, optional): Dict with HGNC symbols as keys and Ensembl ID's as values. Defaults to None.
 
-    Raises:
-        NotImplementedError: _description_
+    Returns:
+        str: Name of a file containing a tokenized dataset suitable for GeneFormer input
     """
-    with open(in_silico_perturber.TOKEN_DICTIONARY_FILE, "rb") as f:
-        gene_token_dict = pickle.load(f)
-
     if gene_name_converter is None:
         gene_name_converter = get_ensembl_mappings()["genesymbol_to_ensembl"]  
 

@@ -1,4 +1,9 @@
-## Extract cell embeddings from GeneFormer
+## A convenient GeneFormer interface for
+
+This is a pip-installable wrapper for [GeneFormer](https://huggingface.co/ctheodoris/Geneformer) that streamlines certain tasks: 
+
+- Fine-tuning for cell type classification, including hyperparameter optimization
+- Extraction of post-perturbation cell embeddings 
 
 ### Installation
 
@@ -31,7 +36,7 @@ from geneformer_embeddings import geneformer_embeddings
 emb = geneformer_embeddings.get_geneformer_perturbed_cell_embeddings(adata, perturb_type = "overexpress")
 ```
 
-#### With fine-tuning 
+#### With fine-tuning
 
 ```python
 from geneformer_embeddings imoprt geneformer_embeddings, geneformer_hyperparameter_optimization 
@@ -53,5 +58,4 @@ model_save_path = geneformer_hyperparameter_optimization.finetune_classify(
     weight_decay          = optimal_hyperparameters[2]["weight_decay"],
 )
 emb = geneformer_embeddings.get_geneformer_perturbed_cell_embeddings(adata, perturb_type = "overexpress")
-
 ```
