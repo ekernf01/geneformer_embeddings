@@ -81,7 +81,7 @@ def _perturb_tokenized_representation(control_expression,
         raise ValueError(f"perturb_type must be 'delete', 'knockdown', 'knockout', or 'overexpress', or 'overexpression'; got {perturb_type}.")
     return perturbation_dataset
 
-def tokenize(adata_train: anndata.AnnData, gene_name_converter = None):
+def tokenize(adata_train: anndata.AnnData, gene_name_converter = None, geneformer_finetune_labels = None):
     """Given an anndata object, tokenize it to a file and return the name of the file. 
 
     Args:
@@ -109,8 +109,8 @@ def tokenize(adata_train: anndata.AnnData, gene_name_converter = None):
     adata_train.obs.columns = [c.replace('/', '_') for c in adata_train.obs.columns] # Loom hates slashes in names
     adata_train.obs["individual"] = adata_train.obs.index
     cols_to_save = ["individual"]
-    if "louvain" in adata_train.obs.columns:
-        cols_to_save.append("louvain")
+    if geneformer_finetune_labels is not None and geneformer_finetune_labels in adata_train.obs.columns:
+        cols_to_save.append(geneformer_finetune_labels)
 
     # Delete prior loom data
     try:

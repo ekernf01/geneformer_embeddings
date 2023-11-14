@@ -19,7 +19,7 @@ import geneformer_embeddings.geneformer_embeddings as geneformer_embeddings
 
 def optimize_hyperparameters(
         file_with_tokens,
-        column_with_labels = "louvain", 
+        column_with_labels, 
         num_proc = 1, 
         freeze_layers = 2,
         geneformer_batch_size = 12,
@@ -152,7 +152,7 @@ def optimize_hyperparameters(
 
 def finetune_classify(
         file_with_tokens,
-        column_with_labels = "louvain",
+        column_with_labels,
         max_input_size = 2 ** 11,  # 2048
         max_lr = 5e-5,
         freeze_layers = 2,
