@@ -24,9 +24,9 @@ The input AnnData object must have columns:
 If you need a small example, try the Nakatake data from our [collection](https://github.com/ekernf01/perturbation_data/).
 
 ```python
-import load_perturbations
-load_perturbations.set_data_path("path/to/perturbation_data/perturbations")
-adata = load_perturbations.load_perturbation("nakatake")
+import pereggrn_perturbations
+pereggrn_perturbations.set_data_path("path/to/perturbation_data/perturbations")
+adata = pereggrn_perturbations.load_perturbation("nakatake")
 ```
 
 #### No fine-tuning (not recommended)

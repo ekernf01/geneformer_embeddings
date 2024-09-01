@@ -63,7 +63,7 @@ def optimize_hyperparameters(
     os.makedirs(output_dir, exist_ok = True)
 
     def model_init():
-        model = BertForSequenceClassification.from_pretrained("ctheodoris/GeneFormer",
+        model = BertForSequenceClassification.from_pretrained("../Geneformer",
                                                             num_labels=len(target_names),
                                                             output_attentions = False,
                                                             output_hidden_states = False)
@@ -103,7 +103,7 @@ def optimize_hyperparameters(
         "per_device_train_batch_size": geneformer_batch_size,
         "per_device_eval_batch_size": geneformer_batch_size,
         "num_train_epochs": epochs,
-        "load_best_model_at_end": True,
+        "load_best_model_at_end": False,
         "output_dir": output_dir,
     }
 
@@ -153,6 +153,7 @@ def optimize_hyperparameters(
 def finetune_classify(
         file_with_tokens,
         column_with_labels,
+        base_model,
         max_input_size = 2 ** 11,  # 2048
         max_lr = 5e-5,
         freeze_layers = 2,
@@ -194,7 +195,7 @@ def finetune_classify(
     
     # reload pretrained model
     model = BertForSequenceClassification.from_pretrained(
-        "ctheodoris/GeneFormer", 
+        base_model, 
         num_labels=len(target_names),
         output_attentions = False,
         output_hidden_states = False
@@ -213,7 +214,7 @@ def finetune_classify(
         pass
 
     # make output directory
-    os.makedirs(output_dir, exist_ok=False)
+    os.makedirs(output_dir, exist_ok=True)
     
     # set training arguments
     training_args = {

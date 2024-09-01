@@ -14,17 +14,17 @@ import math
 
 def get_ensembl_mappings():
     """Obtain dictionaries to map between HGNC symbol and ensembl ID"""                                   
-    # Set up connection to server 
     try:
         server = biomart.BiomartServer('http://useast.ensembl.org/biomart')         
+        mart = server.datasets['hsapiens_gene_ensembl']                                                                                                                                                                     
+        response = mart.search({'attributes': ['hgnc_symbol', 'ensembl_gene_id']})                          
+        data = response.raw.data.decode('ascii')       
     except:
         server = biomart.BiomartServer('http://ensembl.org/biomart')         
-    mart = server.datasets['hsapiens_gene_ensembl']                            
-                                                                                                                                                    
-    # Get the mapping between the attributes                                    
-    response = mart.search({'attributes': ['hgnc_symbol', 'ensembl_gene_id']})                          
-    data = response.raw.data.decode('ascii')                                    
-                                                                                
+        mart = server.datasets['hsapiens_gene_ensembl']                                                                                                                                                                     
+        response = mart.search({'attributes': ['hgnc_symbol', 'ensembl_gene_id']})                          
+        data = response.raw.data.decode('ascii')       
+
     ensembl_to_genesymbol = {}                                                  
     genesymbol_to_ensembl = {}
     for line in data.splitlines():                                              
@@ -66,7 +66,7 @@ def _perturb_tokenized_representation(control_expression,
             [
                 [
                     cell_token_lists[i].index(p)
-                    for p in perturbation_list_list[i]
+                    for p in set(perturbation_list_list[i]).intersection(cell_token_lists[i])
                 ] 
                 for i in range(len(cell_token_lists))
             ],
@@ -104,7 +104,7 @@ def tokenize(adata_train: anndata.AnnData, geneformer_finetune_labels: str = Non
         adata_train.obs["n_counts"] = adata_train.raw.X.sum(axis = 1)
         adata_train.X = adata_train.raw[adata_train.obs_names, adata_train.var_names].X
     except:
-        raise ValueError("GeneFormer requires that raw counts be available in .raw.X.")
+        raise ValueError("GeneFormer requires that raw counts be available in .raw.X (indexed by the same .obs and .var indices).")
     adata_train.obs.columns = [c.replace('/', '_') for c in adata_train.obs.columns] # Loom hates slashes in names
     adata_train.obs["individual"] = adata_train.obs.index
     cols_to_save = ["individual"]
@@ -144,6 +144,7 @@ def get_geneformer_perturbed_cell_embeddings(
         apply_perturbation_explicitly: bool = True,
         gene_name_converter: dict = None,
         file_with_finetuned_model = None,
+        file_with_default_model = None,
     ):
     """Predict perturbation-induced changes in terms of GeneFormer embeddings. 
 
@@ -151,6 +152,7 @@ def get_geneformer_perturbed_cell_embeddings(
         file_with_tokens (str): path to a file created by this module's tokenize() function. 
         adata_train (anndata.AnnData): expression data with raw counts in .raw.X, perturbations 
             in .obs["perturbation"], and perturbation types in .obs["perturbation_type"].
+            This is used only for the perturbation metadata; the actual expression is taken from file_with_tokens.
         layer_to_quant (int): What layer of the network to extract embeddings from.
         apply_perturbation_explicitly: If True, apply perturbations as in GeneFormer: alter the rank order to place overexpressed 
             genes first and deleted genes last. Otherwise, assume the input expression already reflects perturbation.
@@ -158,6 +160,7 @@ def get_geneformer_perturbed_cell_embeddings(
             We recommend False, but True can be useful for e.g. controls labeled "GFP" or "ctrl" or "scramble".  
         gene_name_converter (dict): dict where keys are HGNC symbols and values are Ensembl gene ID's.
         file_with_finetuned_model (str): path to a file where you have saved a fine-tuned model.
+        file_with_default_model (str): path to a file where you have saved a model to use if the fine-tuned model is not available.
 
     Returns:
 
@@ -169,10 +172,10 @@ def get_geneformer_perturbed_cell_embeddings(
         gene_name_converter = get_ensembl_mappings()["genesymbol_to_ensembl"]  
 
     if file_with_finetuned_model is None:
-        print(f"Using pre-trained model 'ctheodoris/Geneformer'")
+        print(f"Using pre-trained model '{file_with_default_model}'")
         isp = InSilicoPerturber(model_type = "pretrained")
         filtered_input_data = isp.load_and_filter(input_data_file = file_with_tokens)
-        geneformer_model = BertForMaskedLM.from_pretrained("ctheodoris/Geneformer", output_hidden_states=True, output_attentions=False)
+        geneformer_model = BertForMaskedLM.from_pretrained(file_with_default_model, output_hidden_states=True, output_attentions=False)
     else:
         print(f"Using fine-tuned model at {file_with_finetuned_model}")
         isp = InSilicoPerturber(model_type = "CellClassifier")
