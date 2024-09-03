@@ -8,7 +8,6 @@ import pandas as pd
 import anndata
 import pickle
 import numpy as np 
-import shutil
 import torch 
 import math
 import tempfile
@@ -216,7 +215,5 @@ def get_geneformer_perturbed_cell_embeddings(
         del outputs
         print(".", end = "", flush = True)
     # Clean up temporary files
-    shutil.rmtree("geneformer_loom_data")
-    shutil.rmtree("geneformer_tokenized_data")
     print("Done extracting features.", flush = True)
     return embeddings
