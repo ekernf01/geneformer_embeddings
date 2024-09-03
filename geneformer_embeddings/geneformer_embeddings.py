@@ -11,6 +11,7 @@ import numpy as np
 import shutil
 import torch 
 import math
+import tempfile
 
 def get_ensembl_mappings():
     """Obtain dictionaries to map between HGNC symbol and ensembl ID"""                                   
@@ -81,7 +82,7 @@ def _perturb_tokenized_representation(control_expression,
         raise ValueError(f"perturb_type must be 'delete', 'knockdown', 'knockout', or 'overexpress', or 'overexpression'; got {perturb_type}.")
     return perturbation_dataset
 
-def tokenize(adata_train: anndata.AnnData, geneformer_finetune_labels: str = None, gene_name_converter: dict = None) -> str:
+def tokenize(adata_train: anndata.AnnData, geneformer_finetune_labels: str = None, gene_name_converter: dict = None, folder_with_tokens: str = "geneformer_tokenized_data") -> str:
     """Given an anndata object, tokenize it to a file and return the name of the file. 
 
     Args:
@@ -111,29 +112,21 @@ def tokenize(adata_train: anndata.AnnData, geneformer_finetune_labels: str = Non
     if geneformer_finetune_labels is not None and geneformer_finetune_labels in adata_train.obs.columns:
         cols_to_save.append(geneformer_finetune_labels)
 
-    # Delete prior loom data
-    try:
-        shutil.rmtree("geneformer_loom_data")
-    except FileNotFoundError:
-        pass
-
     # save to loom
-    os.makedirs("geneformer_loom_data", exist_ok=True)
-    adata_train.obs_names = [str(s) for s in adata_train.obs_names] #loom hates Categorical, just like everyone else
-    adata_train.var_names = [str(s) for s in adata_train.var_names]
-    adata_train.obs["condition"] = "NA" # I'm sorry, this is a horrible hack to get rid of a non-ASCII char in the Frangieh dataset. 
-    adata_train.write_loom("geneformer_loom_data/adata_train.loom")
-    tk = TranscriptomeTokenizer({col:col for col in cols_to_save}, nproc=15)
-
-    # Delete prior tokenized data
-    try:
-        shutil.rmtree("geneformer_tokenized_data")
-    except FileNotFoundError:
-        pass
-
-    # tokenizeeeeeee
-    tk.tokenize_data(pathlib.Path("geneformer_loom_data"), "geneformer_tokenized_data", "demo")
-    return "geneformer_tokenized_data/demo.dataset"
+    with tempfile.TemporaryDirectory() as loom_dir:
+        os.makedirs(os.path.join(loom_dir, "loom"), exist_ok=True)
+        adata_train.obs_names = [str(s) for s in adata_train.obs_names] #loom hates Categorical, just like everyone else
+        adata_train.var_names = [str(s) for s in adata_train.var_names]
+        adata_train.obs["condition"] = "NA" # I'm sorry, this is a horrible hack to get rid of a non-ASCII char in the Frangieh dataset. 
+        adata_train.write_loom(f"{loom_dir}/adata_train.loom")
+        tk = TranscriptomeTokenizer({col:col for col in cols_to_save}, nproc=15)
+        # tokenizeeeeeee
+        tk.tokenize_data(
+            pathlib.Path(loom_dir), 
+            folder_with_tokens, 
+            "demo"
+        )
+        return os.path.join(folder_with_tokens, "demo.dataset")
 
 
 def get_geneformer_perturbed_cell_embeddings(
@@ -196,7 +189,7 @@ def get_geneformer_perturbed_cell_embeddings(
                     if not assume_unrecognized_genes_are_controls:
                         raise KeyError(f"Gene {g} either has no GeneFormer token or no Ensembl ID, so it cannot be perturbed. Original error: {repr(e)}")
     adata_train.obs["perturbation_type"] = adata_train.obs["perturbation_type"].astype(str)
-    assert len(adata_train.obs["perturbation_type"].unique()) == 1, "Our GeneFormer interface cannot handle deletion and overexpression in the same dataset."
+    assert len(adata_train.obs["perturbation_type"].unique()) == 1, "This GeneFormer interface cannot handle deletion and overexpression in the same dataset."
     assert len(filtered_input_data) == len(tokens_to_perturb), "Internal error: number of tokenized cells does not match number of perturbations."
     perturbation_batch = _perturb_tokenized_representation(
         control_expression = filtered_input_data, 
