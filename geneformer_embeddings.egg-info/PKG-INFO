@@ -1,14 +1,16 @@
 Metadata-Version: 2.1
-Name: geneformer-embeddings
+Name: geneformer_embeddings
 Version: 0.0.1
 Summary: Extract cell embeddings from GeneFormer
 Home-page: https://github.com/ekernf01/geneformer_embeddings
 Author: Eric Kernfeld
 Author-email: eric.kern13@gmail.com
-License: UNKNOWN
-Platform: UNKNOWN
 Requires-Python: >=3.7
 Description-Content-Type: text/markdown
+Requires-Dist: numpy
+Requires-Dist: anndata
+Requires-Dist: biomart
+Requires-Dist: transformers
 
 ## A convenient GeneFormer interface for
 
@@ -71,4 +73,3 @@ model_save_path = geneformer_hyperparameter_optimization.finetune_classify(
 )
 emb = geneformer_embeddings.get_geneformer_perturbed_cell_embeddings(adata, perturb_type = "overexpress")
 ```
-
